@@ -2,15 +2,12 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from transformers import pipeline
-import torch
+import os
+import json
 import gc
 from googletrans import Translator
 import numpy as np
-import os
-import json
 import bcrypt
-from datetime import datetime
 
 # === PAGE CONFIG ===
 st.set_page_config(page_title="Jansahayak RTI Dashboard", layout="wide")
@@ -66,9 +63,8 @@ translations = {
         "errorColumns": "Error: Required columns not found in the Excel file.",
         "chatbotTitle": "Jansahayak Chatbot",
         "chatbotPrompt": "Ask a question about the projects...",
-        "chatbotError": "Chatbot is currently unavailable. Please try again.",
-        "demoHint": "Try asking: Which taluka has the highest spending?",
-        "loadingModel": "🧠 Loading AI model... (first run takes ~2 min)",
+        "chatbotError": "Chatbot is currently unavailable.",
+        "demoHint": "Try: Which taluka has highest spending?",
         "adminLogin": "Admin Login",
         "adminPassword": "Password",
         "loginButton": "Log In",
@@ -107,9 +103,8 @@ translations = {
         "errorColumns": "त्रुटी: एक्सेल फाइलमध्ये आवश्यक कॉलम्स सापडले नाहीत.",
         "chatbotTitle": "जनसहायक चॅटबॉट",
         "chatbotPrompt": "प्रकल्पांबद्दल प्रश्न विचारा...",
-        "chatbotError": "चॅटबॉट उपलब्ध नाही. कृपया पुन्हा प्रयत्न करा.",
+        "chatbotError": "चॅटबॉट उपलब्ध नाही.",
         "demoHint": "प्रयत्न करा: कोणत्या तालुक्यात सर्वाधिक खर्च झाला?",
-        "loadingModel": "🧠 मॉडेल लोड होत आहे... (पहिल्यांदा ~2 मिनिटे लागतात)",
         "adminLogin": "प्रशासक लॉगिन",
         "adminPassword": "पासवर्ड",
         "loginButton": "लॉग इन",
@@ -128,7 +123,7 @@ language_names = {
     "mr": translations["mr"]["marathi"]
 }
 
-# === HELPER: Number Formatter ===
+# === HELPER: Abbreviate Numbers ===
 def abbreviate_number(num):
     if pd.isna(num) or num is None:
         return "0"
@@ -142,7 +137,7 @@ def abbreviate_number(num):
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_excel("HADP_WORK_LIST_MASTER.xlsx")
+        df = pd.read_excel("HADP_WORK_LIST_MASTER.xlsx")  # Updated path
         column_mapping = {
             "अ. क्र.": "srNo",
             "तालुका": "taluka",
@@ -166,10 +161,10 @@ def load_data():
         st.error(translations["en"]["errorFile"])
         return pd.DataFrame()
     except Exception as e:
-        st.error(f"Error loading  {str(e)}")
+        st.error(f"Error loading data: {str(e)}")
         return pd.DataFrame()
 
-# === CHAT HISTORY: Load/Save ===
+# === CHAT HISTORY ===
 CHAT_FILE = "chat_history.json"
 
 def load_chat_history():
@@ -182,30 +177,11 @@ def save_chat_history(messages):
     with open(CHAT_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, indent=2, ensure_ascii=False)
 
-# === TRANSLATOR CACHE ===
+# === TRANSLATOR (Cached) ===
 @st.cache_resource
 def get_translator():
     return Translator()
 
-# === LOCAL MODEL CACHE ===
-@st.cache_resource
-def load_local_model():
-    st.info(translations[lang]["loadingModel"])
-    try:
-        pipe = pipeline(
-            "text2text-generation",
-            model="google/flan-t5-small",
-            tokenizer="google/flan-t5-small",
-            device=-1,
-            torch_dtype=torch.float32,
-            model_kwargs={"max_length": 150, "temperature": 0.7, "top_p": 0.95},
-        )
-        return pipe
-    except Exception as e:
-        st.error(f"Model load failed: {str(e)}")
-        return None
-
-# === TRANSLATE FUNCTION ===
 def translate_text(text, dest_lang):
     if dest_lang == "en":
         return text
@@ -216,52 +192,64 @@ def translate_text(text, dest_lang):
     except Exception:
         return "माफ करा, भाषांतर उपलब्ध नाही"
 
-# === CHATBOT RESPONSE ===
+# === SMART RULE-BASED CHATBOT ===
 def get_chatbot_response(prompt, df, lang):
     try:
-        pipe = load_local_model()
-        if not pipe:
-            return translations[lang]["chatbotError"]
+        if df.empty:
+            return "No data." if lang == "en" else "माहिती नाही."
 
-        total = len(df)
-        avg = df["amount"].mean()
-        top_taluka = df.groupby("taluka")["amount"].sum().idxmax()
-        years = f"{df['year'].min()}–{df['year'].max()}"
+        prompt_lower = prompt.lower()
 
-        context = f"{total} projects ({years}). Avg: ₹{avg/1000:.1f}K. Top: {top_taluka}."
+        if "highest spending" in prompt_lower or "top taluka" in prompt_lower or "खर्च" in prompt_lower:
+            top = df.groupby("taluka")["amount"].sum().idxmax()
+            amt = df.groupby("taluka")["amount"].sum().max()
+            resp = f"Taluka {top} has highest spending: ₹{amt:,.0f}K."
+            return resp if lang == "en" else translate_text(resp, "mr")
 
-        input_text = (
-            f"Answer in English. Context: {context} Question: {prompt}"
-        )
+        elif "how many projects" in prompt_lower or "एकूण प्रकल्प" in prompt_lower:
+            cnt = len(df)
+            resp = f"There are {cnt} projects."
+            return resp if lang == "en" else translate_text(resp, "mr")
 
-        outputs = pipe(input_text, max_new_tokens=150)
-        response = outputs[0]["generated_text"].strip()
+        elif "average cost" in prompt_lower or "सरासरी खर्च" in prompt_lower:
+            avg = df["amount"].mean()
+            resp = f"Average cost: ₹{avg/1000:.1f}K."
+            return resp if lang == "en" else translate_text(resp, "mr")
 
-        if lang == "mr":
-            response = translate_text(response, "mr")
+        elif "most common type" in prompt_lower or "प्रकार" in prompt_lower:
+            typ = df["type"].mode()[0]
+            cnt = df["type"].value_counts()[typ]
+            resp = f"Most common type: '{typ}' ({cnt} projects)."
+            return resp if lang == "en" else translate_text(resp, "mr")
 
-        return response
+        elif "agency" in prompt_lower and "highest" in prompt_lower:
+            agency = df.groupby("agency")["amount"].sum().idxmax()
+            resp = f"Agency with highest spending: {agency}."
+            return resp if lang == "en" else translate_text(resp, "mr")
 
-    except Exception as e:
-        return f"{translations[lang]['chatbotError']}"
+        else:
+            resp = "Ask about spending, projects, or types. Try: 'Which taluka has highest spending?'"
+            return resp if lang == "en" else translate_text(resp, "mr")
+
+    except Exception:
+        return translations[lang]["chatbotError"]
 
 # === ADMIN LOGIN ===
 def admin_login():
     t = translations[lang]
     st.title(t["adminLogin"])
-    password = st.text_input(t["adminPassword"], type="password")
+    pwd = st.text_input(t["adminPassword"], type="password")
     if st.button(t["loginButton"]):
         try:
-            hashed = bcrypt.hashpw(st.secrets["admin"]["password"].encode(), bcrypt.gensalt())
-            if bcrypt.checkpw(password.encode(), hashed):
+            expected = st.secrets["admin"]["password"]
+            if bcrypt.checkpw(pwd.encode(), bcrypt.hashpw(expected.encode(), bcrypt.gensalt())):
                 st.session_state.admin_logged_in = True
                 st.rerun()
             else:
                 st.error(t["loginFailed"])
-        except Exception:
-            st.error("Admin config error.")
+        except:
+            st.error("Admin config missing.")
 
-# === ADMIN PANEL ===
 def admin_panel():
     t = translations[lang]
     st.title(t["adminPage"])
@@ -270,8 +258,8 @@ def admin_panel():
         st.rerun()
 
     st.subheader(t["viewChat"])
-    chat_log = load_chat_history()
-    for msg in chat_log:
+    log = load_chat_history()
+    for msg in log:
         st.text(f"[{msg['time']}] {msg['role']}: {msg['content']}")
 
     if st.button(t["clearChat"]):
@@ -282,7 +270,7 @@ def admin_panel():
 
     st.download_button(
         label=t["exportChat"],
-        data=json.dumps(chat_log, indent=2, ensure_ascii=False),
+        data=json.dumps(log, indent=2, ensure_ascii=False),
         file_name="chat_history.json",
         mime="application/json"
     )
@@ -304,7 +292,7 @@ def dashboard():
 
     st.title(t["title"])
 
-    # === Filters ===
+    # Filters
     col1, col2, col3 = st.columns([2, 2, 3])
     with col1:
         taluka_filter = st.selectbox(t["filterTaluka"], [""] + sorted(df["taluka"].unique()),
@@ -329,7 +317,7 @@ def dashboard():
     if search_button and search_term:
         filtered_df = filtered_df[filtered_df["workName"].str.contains(search_term, case=False, na=False)]
 
-    # === Interesting Fact ===
+    # Interesting Fact
     if not filtered_df.empty:
         max_taluka = df.groupby("taluka")["amount"].sum().idxmax()
         max_amt = df.groupby("taluka")["amount"].sum().max()
@@ -337,7 +325,7 @@ def dashboard():
         fact = fact_en if lang == "en" else translate_text(fact_en, "mr")
         st.markdown(f'<div class="info-box">{t["interestingFact"]}: {fact}</div>', unsafe_allow_html=True)
 
-    # === Visualizations ===
+    # Visualizations
     if not filtered_df.empty:
         st.subheader(t["costByTaluka"])
         cost_df = df.groupby("taluka")["amount"].sum().reset_index()
@@ -358,14 +346,14 @@ def dashboard():
         fig3 = px.pie(type_df, names="type", values="count", color_discrete_sequence=["#3B82F6", "#10B981"])
         st.plotly_chart(fig3, use_container_width=True)
 
-    # === Table ===
+    # Table
     st.subheader(t["tableTitle"])
     disp_df = filtered_df.copy()
     disp_df["amount"] = disp_df["amount"].apply(abbreviate_number)
     disp_df.columns = [t[key] for key in ["srNo", "taluka", "year", "workName", "amount", "agency", "type"]]
     st.dataframe(disp_df, use_container_width=True)
 
-    # === Chatbot ===
+    # Chatbot
     st.subheader(t["chatbotTitle"])
     st.caption(t["demoHint"])
 
@@ -384,12 +372,13 @@ def dashboard():
         st.session_state.messages.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            with st.spinner("🧠 Thinking..."):
+            with st.spinner("Thinking..."):
                 response = get_chatbot_response(prompt, df, lang)
             st.markdown(response)
         st.session_state.messages.append({"role": "assistant", "content": response})
 
-        # Save to file
+        # Save to chat history
+        from datetime import datetime
         log_entry = {
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "role": "user",
@@ -406,7 +395,6 @@ def dashboard():
 
 # === MAIN ROUTER ===
 def main():
-    # Initialize session state
     if "admin_logged_in" not in st.session_state:
         st.session_state.admin_logged_in = False
     if "lang" not in st.session_state:
@@ -414,19 +402,13 @@ def main():
 
     lang = st.session_state.lang
 
-    # Admin login page
     if not st.session_state.admin_logged_in:
-        choice = st.sidebar.radio(
-            "Mode",
-            ["User Dashboard", "Admin Login"],
-            format_func=lambda x: translations[lang]["adminLogin"] if x == "Admin Login" else "Dashboard"
-        )
+        choice = st.sidebar.radio("Mode", ["Dashboard", "Admin Login"])
         if choice == "Admin Login":
             admin_login()
         else:
             dashboard()
     else:
-        # Admin panel
         st.sidebar.markdown("---")
         if st.sidebar.button(translations[lang]["backToDashboard"]):
             st.session_state.admin_logged_in = False
