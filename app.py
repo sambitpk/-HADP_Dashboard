@@ -137,7 +137,7 @@ def abbreviate_number(num):
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_excel("data/HADP_WORK_LIST_MASTER.xlsx")  # Ensure file is in data/
+        df = pd.read_excel("HADP_WORK_LIST_MASTER.xlsx")  # Ensure file is in data/
         column_mapping = {
             "अ. क्र.": "srNo",
             "तालुका": "taluka",
