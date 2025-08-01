@@ -137,7 +137,7 @@ def abbreviate_number(num):
 @st.cache_data
 def load_data():
     try:
-        df = pd.read_excel("HADP_WORK_LIST_MASTER.xlsx")  # Updated path
+        df = pd.read_excel("data/HADP_WORK_LIST_MASTER.xlsx")  # Ensure file is in data/
         column_mapping = {
             "अ. क्र.": "srNo",
             "तालुका": "taluka",
@@ -177,7 +177,7 @@ def save_chat_history(messages):
     with open(CHAT_FILE, "w", encoding="utf-8") as f:
         json.dump(messages, f, indent=2, ensure_ascii=False)
 
-# === TRANSLATOR (Cached) ===
+# === TRANSLATOR ===
 @st.cache_resource
 def get_translator():
     return Translator()
@@ -192,7 +192,7 @@ def translate_text(text, dest_lang):
     except Exception:
         return "माफ करा, भाषांतर उपलब्ध नाही"
 
-# === SMART RULE-BASED CHATBOT ===
+# === RULE-BASED CHATBOT (NO transformers, NO torch) ===
 def get_chatbot_response(prompt, df, lang):
     try:
         if df.empty:
