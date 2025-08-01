@@ -8,7 +8,7 @@ import numpy as np
 import torch
 
 # Initialize Streamlit page configuration
-st.set_page_config(page_title="Jansahayak RTI Dashboard", layout="wide")
+st.set_page_config(page_title="Jansahayak Dashboard", layout="wide")
 
 # Load custom CSS for Marathi font
 st.markdown("""
@@ -26,7 +26,7 @@ st.markdown("""
 # Translations for bilingual support
 translations = {
     "en": {
-        "title": "Jansahayak RTI Dashboard",
+        "title": "Jansahayak Dashboard",
         "srNo": "Sr. No.",
         "taluka": "Taluka",
         "year": "Year",
@@ -55,7 +55,7 @@ translations = {
         "chatbotError": "Chatbot unavailable: Unable to load the model or process the request."
     },
     "mr": {
-        "title": "जनसहायक आरटीआय डॅशबोर्ड",
+        "title": "जनसहायक डॅशबोर्ड",
         "srNo": "अ. क्र.",
         "taluka": "तालुका",
         "year": "वर्ष",
